@@ -1,0 +1,14 @@
+# Build output
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# App runtime data (per-user, should never be committed)
+config.json
+steamcmd/
