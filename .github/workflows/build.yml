@@ -32,7 +32,7 @@ jobs:
         run: >
           python -m PyInstaller --onefile --windowed
           --name "L4D2AddonManager"
-          --collect-all customtkinter
+          --collect-all webview --collect-all clr_loader --collect-all pythonnet
           l4d2_addon_manager.py
 
       - name: Upload build artifact

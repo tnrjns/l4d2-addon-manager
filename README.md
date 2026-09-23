@@ -1,8 +1,8 @@
 # L4D2 Addon Manager
 
-Install Left 4 Dead 2 Workshop addons **locally** by pasting a link. No
-subscribing, no sketchy downloader sites, no manually renaming `.vpk` files
-or hand-editing `gameinfo.txt`.
+Install Left 4 Dead 2 Workshop addons and **collections** locally by pasting
+a link. No subscribing, no sketchy downloader sites, no manually renaming
+`.vpk` files or hand-editing `gameinfo.txt`.
 
 Paste a Workshop URL → click Install → done.
 
@@ -19,23 +19,40 @@ Normally, installing a Workshop addon as a local mod means:
 3. Rename the `.vpk` to `pak01_dir.vpk`
 4. Make a folder for it in your L4D2 directory
 5. Open `gameinfo.txt` and add a `SearchPaths` entry by hand
-6. Repeat forever, and hope you remember which folder was which
+6. Repeat forever, for every addon, and hope you remember which folder was which
 
-This app does all of that for you, and names each folder after the addon's
-real Workshop title so you can actually tell them apart later.
+This app does all of that for you — including whole **collections** — and
+names each folder after the addon's real Workshop title, with its preview
+image, so you can actually tell them apart later.
 
 ## Features
 
 - **Paste & install** — give it any Workshop URL or ID
-- **Auto-names folders** using the addon's real title from Steam
-- **Enable / disable** addons with a switch (temporarily removes the
-  `gameinfo.txt` line; files stay on disk, so toggling back on is instant)
-- **Enable All / Disable All** in one click
-- **Search** your installed addons
-- **Launch L4D2** directly, with custom launch options that get remembered
-- **Workshop page** button on every addon, so you can jump back to its listing
+- **Whole collections in one paste** — it detects a collection link
+  automatically, installs everything inside it (skipping what you already
+  have), and drops the result into a modlist named after the collection
+- **Live download progress** — real megabyte and percentage readout while
+  an addon downloads, not just a spinner
+- **Auto-names folders and shows preview images** using each addon's real
+  Workshop title and picture
+- **Enable / disable** any addon — or several at once — without deleting
+  files, so switching mods on and off is instant
+- **Modlists** — group addons into named loadouts (e.g. "Competitive",
+  "Graphical Singleplayer") and apply one to enable exactly those and
+  disable everything else
+- **Mass-select** — drag across addons, or Ctrl/Shift-click, to enable,
+  disable, remove, or add several to a modlist at once
+- **Search and sort** your installed addons (by name, size, date installed,
+  or enabled status)
+- **Launches L4D2 through Steam**, keeping the session VAC-secure, with
+  custom launch options remembered between runs
+- Seven built-in themes, and an in-app notice when a newer version is
+  available on GitHub
 - Automatic one-time backup of your original `gameinfo.txt`
 - Handles single `.vpk`, multi-part `.vpk`, and loose-file addons
+- A **Rescan** tool that recovers your addon list (including preview
+  images) directly from disk and `gameinfo.txt`, in case `config.json`
+  ever goes missing
 - Downloads SteamCMD for you on first run
 
 ## Install (for most people)
@@ -48,6 +65,11 @@ real Workshop title so you can actually tell them apart later.
 > (signing certificates cost money), Windows may show a "Windows protected
 > your PC" screen the first time. Click **More info → Run anyway**. The
 > full source is in this repo if you'd rather build it yourself.
+>
+> **WebView2:** the app's interface renders through Microsoft Edge
+> WebView2, which is pre-installed on virtually all up-to-date Windows 10/11
+> machines. If it's somehow missing, Windows will prompt you to install the
+> small WebView2 Runtime automatically the first time you run the app.
 
 On first launch it'll try to auto-detect your L4D2 folder. If it guesses
 wrong, click **Browse** and point it at the folder containing
@@ -57,9 +79,12 @@ wrong, click **Browse** and point it at the folder containing
 C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2
 ```
 
+The app will let you know right in its own window if a newer version is
+available on GitHub, with a one-click link straight to it.
+
 ## Usage
 
-1. Find an addon on the Steam Workshop in your browser
+1. Find an addon (or collection) on the Steam Workshop in your browser
 2. Copy the page URL (e.g. `https://steamcommunity.com/sharedfiles/filedetails/?id=123456789`)
 3. Paste it into the app (there's a **Paste** button) and hit **Install**
 
@@ -72,7 +97,7 @@ Each addon becomes its own folder next to `left4dead2.exe`:
 ```
 Left 4 Dead 2\
 ├── left4dead2.exe
-├── Some Cool Addon (123456789)\
+├── Some Cool Addon\
 │   └── pak01_dir.vpk
 └── left4dead2\
     └── gameinfo.txt        ← a SearchPaths line is added here
@@ -83,7 +108,7 @@ The matching `gameinfo.txt` entry looks like:
 ```
 SearchPaths
 {
-    Game            "Some Cool Addon (123456789)"
+    Game            "Some Cool Addon"
     Game            update
     ...
 }
@@ -97,7 +122,7 @@ time the app edits it.
 If you'd rather not use the prebuilt exe:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/l4d2-addon-manager.git
+git clone https://github.com/tnrjns/l4d2-addon-manager.git
 cd l4d2-addon-manager
 pip install -r requirements.txt
 python l4d2_addon_manager.py
@@ -111,7 +136,7 @@ Double-click `build_exe.bat`, or run:
 
 ```bash
 pip install -r requirements.txt pyinstaller
-python -m PyInstaller --onefile --windowed --name "L4D2AddonManager" --collect-all customtkinter l4d2_addon_manager.py
+python -m PyInstaller --onefile --windowed --name "L4D2AddonManager" --collect-all webview --collect-all clr_loader --collect-all pythonnet l4d2_addon_manager.py
 ```
 
 The result lands in `dist\L4D2AddonManager.exe`.
@@ -119,15 +144,22 @@ The result lands in `dist\L4D2AddonManager.exe`.
 ## Publishing a new release
 
 The repo includes a GitHub Actions workflow that builds the exe on a Windows
-runner and attaches it to a release automatically. To cut a release:
+runner and attaches it to a release automatically. The app also checks this
+same GitHub Releases feed on launch and shows an in-app banner if a newer
+version exists, so tagging a release is what actually notifies users.
+
+To cut a release:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 Actions will build it and publish a release with the exe attached. You can
 also trigger a build manually from the **Actions** tab without tagging.
+
+Or just run `release.bat`, which commits, pushes, tags, and pushes the tag
+for you — it'll ask for the version number.
 
 ## Notes & limitations
 
