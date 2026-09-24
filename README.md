@@ -82,6 +82,69 @@ C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2
 The app will let you know right in its own window if a newer version is
 available on GitHub, with a one-click link straight to it.
 
+## Install on Linux
+
+There's no compiled Linux binary — GTK/WebKit2 doesn't bundle reliably
+across distros, so it ships as source instead, via one of two ways:
+
+**Option A — download the release bundle**
+
+1. Go to the [**Releases**](../../releases) page
+2. Download `L4D2AddonManager-linux.tar.gz` from the latest release
+3. Extract it, then:
+
+```bash
+cd L4D2AddonManager-linux
+chmod +x run_linux.sh
+./run_linux.sh
+```
+
+**Option B — clone the repo** (if you want to track updates via git)
+
+```bash
+git clone https://github.com/tnrjns/l4d2-addon-manager.git
+cd l4d2-addon-manager
+chmod +x run_linux.sh
+./run_linux.sh
+```
+
+`run_linux.sh` installs `pywebview` and whichever GTK/WebKit2 packages your
+distro needs (detects `apt` or `pacman` automatically), then launches the
+app. If you'd rather do it by hand, or you're not on apt/pacman:
+
+```bash
+pip install pywebview
+
+# Ubuntu / Debian / Mint / Pop!_OS:
+sudo apt install gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+
+# Arch / CachyOS / Manjaro / EndeavourOS:
+sudo pacman -S python-gobject webkit2gtk-4.1
+
+python3 l4d2_addon_manager.py
+```
+
+If GTK doesn't work for your setup, there's a Qt-based fallback:
+
+```bash
+pip install PyQt5 PyQtWebEngine qtpy
+```
+
+**Wayland note:** on compositors like Hyprland or Sway, WebKitGTK
+occasionally renders oddly or refuses to open. If that happens, try forcing
+XWayland instead:
+
+```bash
+GDK_BACKEND=x11 python3 l4d2_addon_manager.py
+```
+
+Everything else — installing addons, modlists, themes, launching the
+game — works the same as on Windows. Linux support is newer than Windows
+support and less battle-tested; if SteamCMD or the game launch does
+something unexpected, the in-app log shows exactly what command ran and
+what came back, which is the most useful thing to include when reporting
+an issue.
+
 ## Usage
 
 1. Find an addon (or collection) on the Steam Workshop in your browser
@@ -143,28 +206,34 @@ The result lands in `dist\L4D2AddonManager.exe`.
 
 ## Publishing a new release
 
-The repo includes a GitHub Actions workflow that builds the exe on a Windows
-runner and attaches it to a release automatically. The app also checks this
-same GitHub Releases feed on launch and shows an in-app banner if a newer
-version exists, so tagging a release is what actually notifies users.
+The repo includes a GitHub Actions workflow that, on every version tag,
+builds the Windows exe and packages a separate Linux bundle
+(`L4D2AddonManager-linux.tar.gz` — the script, `run_linux.sh`, and a short
+install note), then attaches **both** to the same release as distinct
+downloads. The app also checks this same GitHub Releases feed on launch
+and shows an in-app banner if a newer version exists, so tagging a release
+is what actually notifies users.
 
 To cut a release:
 
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+git tag v2.2.0
+git push origin v2.2.0
 ```
 
-Actions will build it and publish a release with the exe attached. You can
-also trigger a build manually from the **Actions** tab without tagging.
+Actions will build it and publish a release with both the Windows exe and
+the Linux bundle attached. You can also trigger a build manually from the
+**Actions** tab without tagging.
 
 Or just run `release.bat`, which commits, pushes, tags, and pushes the tag
 for you — it'll ask for the version number.
 
 ## Notes & limitations
 
-- **Windows only.** The app automates Windows paths and launches
-  `left4dead2.exe` directly.
+- **Windows is the primary platform.** Linux is supported (see [Install
+  on Linux](#install-on-linux) above) but newer and less tested — no
+  prebuilt binary yet, and Windows-specific things like WebView2 don't
+  apply there.
 - Uses SteamCMD's **anonymous login**, which works for public Workshop
   items. Private or restricted items may fail — the in-app log will show
   SteamCMD's actual error.

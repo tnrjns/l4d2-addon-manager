@@ -1,24 +1,24 @@
 """
 L4D2 Workshop Addon Manager (web UI edition)
 ---------------------------------------------
-Same functionality as the original customtkinter version, but the UI is
-now HTML/CSS/JS rendered inside the OS's native WebView2 control via
-`pywebview`. This gets real GPU-accelerated rendering (smooth resizing,
-CSS transitions, cheap scrolling of long lists) instead of Tkinter's
-CPU-only widget layout.
+The UI is HTML/CSS/JS rendered inside the OS's native web view via
+`pywebview` (WebView2 on Windows, GTK/WebKit2 on Linux). This gets real
+GPU-accelerated rendering (smooth resizing, CSS transitions, cheap
+scrolling of long lists) instead of a CPU-only native-widget toolkit.
 
-All of the actual game/file/network logic below (SteamCMD, gameinfo.txt
-editing, theme colors, modlists, etc.) is unchanged from the Tkinter
-version — none of it ever depended on Tkinter itself. Only the UI layer
-was rewritten.
+Primarily built and tested on Windows. Linux support (SteamCMD's Linux
+build, native Steam client detection, Linux game-binary detection) is
+implemented but far less battle-tested — if something Steam- or
+launch-related misbehaves there, the in-app log is the place to look.
 
-Requires: Windows, Python 3.8+, and:
+Requires: Python 3.8+, and:
 
     pip install pywebview
 
-WebView2 itself (the actual rendering engine) is pre-installed on Windows
-11 and most up-to-date Windows 10 machines. If it's missing, Windows will
-prompt to install the small WebView2 Runtime automatically.
+On Linux, pywebview also needs a WebKit2/GTK backend available, e.g. on
+Debian/Ubuntu:
+
+    sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 
 Run with:  python l4d2_addon_manager.py
 """
@@ -35,6 +35,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import threading
 import urllib.parse
@@ -60,18 +61,36 @@ except ImportError:
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.json"
 STEAMCMD_DIR = APP_DIR / "steamcmd"
-STEAMCMD_EXE = STEAMCMD_DIR / "steamcmd.exe"
-STEAMCMD_ZIP_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+
+IS_WINDOWS = sys.platform == "win32"
+
+if IS_WINDOWS:
+    STEAMCMD_EXE = STEAMCMD_DIR / "steamcmd.exe"
+    STEAMCMD_ARCHIVE_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+    # Windows Source-engine games always ship as a plain .exe.
+    L4D2_EXE_CANDIDATES = ["left4dead2.exe"]
+    DEFAULT_L4D2_PATHS = [
+        r"C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2",
+        r"C:\Steam\steamapps\common\Left 4 Dead 2",
+    ]
+else:
+    STEAMCMD_EXE = STEAMCMD_DIR / "steamcmd.sh"
+    STEAMCMD_ARCHIVE_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
+    # Left 4 Dead 2 has a native Linux build, but I can't confirm the exact
+    # binary name against a real install from here -- trying the likely
+    # candidates in order rather than betting everything on one guess.
+    L4D2_EXE_CANDIDATES = ["left4dead2", "left4dead2.sh", "hl2_linux"]
+    _home = str(Path.home())
+    DEFAULT_L4D2_PATHS = [
+        f"{_home}/.local/share/Steam/steamapps/common/Left 4 Dead 2",
+        f"{_home}/.steam/steam/steamapps/common/Left 4 Dead 2",
+        f"{_home}/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Left 4 Dead 2",
+    ]
+
 L4D2_APPID = "550"
-L4D2_EXE_NAME = "left4dead2.exe"
 GITHUB_URL = "https://github.com/tnrjns/l4d2-addon-manager"
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/tnrjns/l4d2-addon-manager/releases/latest"
-APP_VERSION = "2.1.0"
-
-DEFAULT_L4D2_PATHS = [
-    r"C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2",
-    r"C:\Steam\steamapps\common\Left 4 Dead 2",
-]
+APP_VERSION = "2.2.0"
 
 
 # --------------------------------------------------------------------------
@@ -198,25 +217,45 @@ def guess_game_path():
     return ""
 
 
-def find_steam_exe() -> Optional[Path]:
-    if winreg is None:
-        return None
-    registry_locations = [
-        (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamExe"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
-    ]
-    for hive, key_path, value_name in registry_locations:
-        try:
-            with winreg.OpenKey(hive, key_path) as key:
-                value, _ = winreg.QueryValueEx(key, value_name)
-        except OSError:
-            continue
-        value = str(value)
-        candidate = Path(value) if value.lower().endswith("steam.exe") else Path(value) / "steam.exe"
+def find_game_exe(game_path: Path) -> Optional[Path]:
+    """Tries each platform-appropriate binary name in turn and returns the
+    first one that actually exists in the game folder."""
+    for name in L4D2_EXE_CANDIDATES:
+        candidate = game_path / name
         if candidate.exists():
             return candidate
     return None
+
+
+def find_steam_launcher() -> Optional[Path]:
+    """Locates the Steam client so the game can be launched *through* it
+    (steam -applaunch 550) instead of running the game's binary directly --
+    that's what keeps the session VAC-secure. Windows: read it from the
+    registry. Linux: look for `steam` on PATH, which covers native
+    package-manager installs; this won't find a Flatpak/Snap-only install,
+    which uses a different launch command entirely."""
+    if IS_WINDOWS:
+        if winreg is None:
+            return None
+        registry_locations = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamExe"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        ]
+        for hive, key_path, value_name in registry_locations:
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    value, _ = winreg.QueryValueEx(key, value_name)
+            except OSError:
+                continue
+            value = str(value)
+            candidate = Path(value) if value.lower().endswith("steam.exe") else Path(value) / "steam.exe"
+            if candidate.exists():
+                return candidate
+        return None
+    else:
+        found = shutil.which("steam")
+        return Path(found) if found else None
 
 
 def _version_tuple(v: str):
@@ -383,12 +422,26 @@ def ensure_steamcmd(log):
         return
     log("SteamCMD not found. Downloading it (one-time setup)...")
     STEAMCMD_DIR.mkdir(parents=True, exist_ok=True)
-    zip_path = STEAMCMD_DIR / "steamcmd.zip"
-    urllib.request.urlretrieve(STEAMCMD_ZIP_URL, zip_path)
+    archive_path = STEAMCMD_DIR / Path(STEAMCMD_ARCHIVE_URL).name
+    urllib.request.urlretrieve(STEAMCMD_ARCHIVE_URL, archive_path)
     log("Extracting SteamCMD...")
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(STEAMCMD_DIR)
-    zip_path.unlink(missing_ok=True)
+    if archive_path.suffix == ".zip":
+        with zipfile.ZipFile(archive_path, "r") as z:
+            z.extractall(STEAMCMD_DIR)
+    else:
+        with tarfile.open(archive_path, "r:gz") as t:
+            t.extractall(STEAMCMD_DIR)
+    archive_path.unlink(missing_ok=True)
+    if not IS_WINDOWS:
+        # tarfile extraction doesn't reliably restore the executable bit,
+        # and steamcmd.sh needs it (as does the real binary it wraps).
+        try:
+            os.chmod(STEAMCMD_EXE, 0o755)
+            inner = STEAMCMD_DIR / "linux32" / "steamcmd"
+            if inner.exists():
+                os.chmod(inner, 0o755)
+        except OSError:
+            pass
     log("Running SteamCMD once to let it finish bootstrapping/updating...")
     subprocess.run(
         [str(STEAMCMD_EXE), "+quit"],
@@ -976,27 +1029,33 @@ class Api:
         if not game_path:
             return
         opts = self._cfg.get("launch_options", "").strip()
-        steam_exe = find_steam_exe()
+        steam_launcher = find_steam_launcher()
         try:
-            if steam_exe:
-                args = [str(steam_exe), "-applaunch", L4D2_APPID] + (shlex.split(opts) if opts else [])
+            if steam_launcher:
+                args = [str(steam_launcher), "-applaunch", L4D2_APPID] + (shlex.split(opts) if opts else [])
                 subprocess.Popen(args)
                 self.log(
-                    "Launched L4D2 through Steam (steam.exe -applaunch)"
+                    "Launched L4D2 through Steam (-applaunch)"
                     + (f" with options: {opts}" if opts else "")
                     + " — this keeps the session VAC-secure."
                 )
             else:
-                exe_path = game_path / L4D2_EXE_NAME
-                if not exe_path.exists():
-                    self._toast(f"Couldn't find {L4D2_EXE_NAME} in:\n{game_path}", success=False)
+                exe_path = find_game_exe(game_path)
+                if not exe_path:
+                    tried = ", ".join(L4D2_EXE_CANDIDATES)
+                    self._toast(f"Couldn't find a game executable in:\n{game_path}\n(tried: {tried})", success=False)
                     return
+                if not IS_WINDOWS:
+                    try:
+                        os.chmod(exe_path, 0o755)
+                    except OSError:
+                        pass
                 args = [str(exe_path)] + (shlex.split(opts) if opts else [])
                 subprocess.Popen(args, cwd=str(game_path))
                 self.log(
-                    f"Couldn't locate steam.exe, so launched {L4D2_EXE_NAME} directly"
+                    f"Couldn't locate the Steam client, so launched {exe_path.name} directly"
                     + (f" with options: {opts}" if opts else "")
-                    + ". Note: launching the exe directly skips Steam's handshake and "
+                    + ". Note: launching the game directly skips Steam's handshake and "
                     "may run in insecure (no-VAC) mode."
                 )
         except Exception as e:
@@ -2765,13 +2824,18 @@ def main():
         min_size=(700, 600),
         background_color="#1E1E22",
     )
-    webview.start(gui="edgechromium", debug=False)
+    # "edgechromium" (WebView2) only exists on Windows. Elsewhere, passing
+    # gui=None lets pywebview auto-detect whatever's actually installed
+    # (typically the GTK/WebKit2 backend on Linux) instead of crashing on
+    # startup trying to load a backend that isn't there.
+    webview.start(gui="edgechromium" if IS_WINDOWS else None, debug=False)
 
 
 if __name__ == "__main__":
-    if sys.platform != "win32":
-        print("This tool automates SteamCMD + gameinfo.txt editing and is built for Windows,")
-        print("which is where L4D2 and its addons folder normally live. It may not work as-is")
-        print("on other platforms.")
+    if not IS_WINDOWS:
+        print("Linux support is newer and less tested than Windows. If something Steam-")
+        print("or launch-related misbehaves, the in-app log will usually show exactly what")
+        print("SteamCMD or the launch command actually did — that's the most useful thing")
+        print("to include when reporting it.")
     main()
 

@@ -47,3 +47,46 @@ jobs:
         with:
           files: dist/L4D2AddonManager.exe
           generate_release_notes: true
+
+  package-linux:
+    # Runs after the Windows job so the release already exists by the time
+    # this attaches a second asset to it -- avoids two jobs racing to
+    # create the same release at once.
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Package Linux bundle
+        run: |
+          mkdir -p dist-linux/L4D2AddonManager-linux
+          cp l4d2_addon_manager.py run_linux.sh requirements.txt dist-linux/L4D2AddonManager-linux/
+          cat > dist-linux/L4D2AddonManager-linux/INSTALL.txt <<'EOF'
+          L4D2 Addon Manager -- Linux
+
+          There's no compiled binary for Linux (yet) -- GTK/WebKit2 doesn't
+          bundle reliably across distros, so this ships as source instead,
+          which is honestly the more reliable way to run it anyway.
+
+          To install and run:
+
+              chmod +x run_linux.sh
+              ./run_linux.sh
+
+          That installs pywebview plus whichever GTK/WebKit2 packages your
+          distro needs (detects apt or pacman automatically), then launches
+          the app. Full details, including the Qt fallback and a Wayland
+          note, are in the main README on GitHub:
+          https://github.com/tnrjns/l4d2-addon-manager#install-on-linux
+          EOF
+          chmod +x dist-linux/L4D2AddonManager-linux/run_linux.sh
+          tar -czf L4D2AddonManager-linux.tar.gz -C dist-linux L4D2AddonManager-linux
+
+      - name: Attach Linux bundle to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: L4D2AddonManager-linux.tar.gz
+          generate_release_notes: true
