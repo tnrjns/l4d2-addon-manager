@@ -217,8 +217,8 @@ is what actually notifies users.
 To cut a release:
 
 ```bash
-git tag v2.2.0
-git push origin v2.2.0
+git tag v2.2.1
+git push origin v2.2.1
 ```
 
 Actions will build it and publish a release with both the Windows exe and

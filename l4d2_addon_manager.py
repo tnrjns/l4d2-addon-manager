@@ -90,7 +90,7 @@ else:
 L4D2_APPID = "550"
 GITHUB_URL = "https://github.com/tnrjns/l4d2-addon-manager"
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/tnrjns/l4d2-addon-manager/releases/latest"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 
 # --------------------------------------------------------------------------
@@ -474,29 +474,29 @@ def download_workshop_item(item_id: str, log, progress=None):
     SteamCMD prints nothing while a Workshop item downloads, only "Success"
     at the very end, so progress is measured by watching its working
     folders grow on disk. `progress(done_bytes)` is called a few times a
-    second while that happens."""
+    second while that happens.
+
+    On Linux, SteamCMD ignores cwd and defaults to the system Steam library
+    (~/.local/share/Steam/steamapps/...) unless we explicitly tell it where
+    to put files via +force_install_dir. We set this to STEAMCMD_DIR so
+    everything stays self-contained next to the app."""
     log(f"Downloading workshop item {item_id} via SteamCMD (anonymous login)...")
     cmd = [
         str(STEAMCMD_EXE),
+        "+force_install_dir", str(STEAMCMD_DIR),
         "+login", "anonymous",
         "+workshop_download_item", L4D2_APPID, item_id,
         "+quit",
     ]
     ws = STEAMCMD_DIR / "steamapps" / "workshop"
     content_dir = ws / "content" / L4D2_APPID / item_id
-    # SteamCMD downloads into a staging folder, then moves the result into
-    # content/. Watch all of them and take the largest.
     staging = [ws / "downloads" / L4D2_APPID / item_id, ws / "temp" / L4D2_APPID / item_id]
-    # A leftover copy from an earlier download would otherwise read as
-    # "100% done" instantly, so content/ only counts once it has changed.
     content_before = _tree_size(content_dir) if content_dir.exists() else None
 
     proc = subprocess.Popen(
         cmd, cwd=str(STEAMCMD_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, errors="replace",
     )
-    # Must drain output continuously: if nobody reads it, SteamCMD blocks
-    # once the pipe buffer fills and the download hangs forever.
     out_lines = []
     reader = threading.Thread(target=lambda: out_lines.extend(proc.stdout), daemon=True)
     reader.start()
@@ -524,8 +524,26 @@ def download_workshop_item(item_id: str, log, progress=None):
             "It may be private, removed, or require you to own the game / "
             "be logged into an account that can access it."
         )
+
+    # SteamCMD on Linux often ignores +force_install_dir and puts files in
+    # the system Steam library instead. Parse the actual download path from
+    # its own success message so we always find the files regardless of
+    # where SteamCMD decided to put them.
     if not content_dir.exists():
-        raise RuntimeError(f"Expected downloaded content at {content_dir} but it wasn't found.")
+        import re
+        # SteamCMD output: 'Downloaded item 123 to "/path/to/file.bin" (N bytes)'
+        # We want the PARENT directory (the item folder), not the file itself.
+        m = re.search(r'Downloaded item \d+ to "([^"]+)"', output)
+        if m:
+            actual_file = Path(m.group(1))
+            actual_dir = actual_file.parent if actual_file.suffix else actual_file
+            if actual_dir.exists():
+                log(f"Note: SteamCMD ignored +force_install_dir and used {actual_dir.parent.parent.parent} instead. "
+                    f"Finding files there.")
+                return actual_dir
+        raise RuntimeError(f"Expected downloaded content at {content_dir} but it wasn't found. "
+                          f"SteamCMD output: {output[-500:]}")
+
     if progress:
         progress(_tree_size(content_dir))
     return content_dir
